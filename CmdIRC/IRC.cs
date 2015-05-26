@@ -28,6 +28,8 @@ namespace RocketMod
             nick = this.Configuration.nick;
             port = this.Configuration.port;
 
+            
+
             if (server == "changeme" || channel == "#changeme")
             {
                 RocketChat.Say("Error: Please make sure you configure the IRC settings! This message is normal if you have just started the plugin. Apply your settings and restart the server! Unloading plugin...");
@@ -45,7 +47,7 @@ namespace RocketMod
                 irc.OnConnected += new EventHandler(OnConnected);
                 irc.OnChannelMessage += new IrcEventHandler(OnChanMessage);
                 irc.OnDisconnected += new EventHandler(OnDisconnected);
-                irc.OnQueryMessage += irc_OnQueryMessage;
+                irc.OnQueryMessage += new IrcEventHandler(OnQueryMessage);
 
                 try { irc.Connect(server, port); RocketChat.Say("Connecting to: " + server + " port: " + port); }
                 catch (Exception ex) 
@@ -57,9 +59,110 @@ namespace RocketMod
             ircThread.Start();
         }
 
-        void irc_OnQueryMessage(object sender, IrcEventArgs e)
+        private void OnQueryMessage(object sender, IrcEventArgs e) //For some reason this just disconnects the server...
         {
-            //For some reason it juss won work... Probably need to get latest IRC library.
+            ChannelUser user = irc.GetChannelUser(channel, e.Data.Nick);
+
+            if (user.IsIrcOp || user.IsOp)
+            {
+                string cmd;
+                string msg;
+                int len = e.Data.Message.Split(' ').Length;
+                cmd = e.Data.Message.Split(' ')[0];
+
+                if (len > 1)
+                {
+                    msg = e.Data.Message.Substring(e.Data.Message.IndexOf(' ')).Trim();
+                }
+                else
+                {
+                    msg = "";
+                }
+                string plr = msg.Split()[0];
+                RocketPlayer p = RocketPlayer.FromName(plr);
+
+                if (msg != "")
+                {
+                    switch (cmd)
+                    {
+                        case "help":
+                            irc.SendMessage(SendType.Message, e.Data.Nick, "kick (player) - Kicks the player from the server.");
+                            irc.SendMessage(SendType.Message, e.Data.Nick, "ban (player) (duration) - Bans the player from the server.");
+                            irc.SendMessage(SendType.Message, e.Data.Nick, "whois (player) - Shows basic information about the player.");
+                            irc.SendMessage(SendType.Message, e.Data.Nick, "god (player) - Toggles godmode for player.");
+                            break;
+
+                        case "kick":
+                            if (p == null)
+                            {
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Could not find player: " + plr);
+                            }
+                            else
+                            {
+                                p.Kick("You've been kicked by an IRC Operator!");
+                            }
+                            break;
+
+                        case "ban":
+                            if (p == null)
+                            {
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Could not find player: " + plr);
+                            }
+                            else
+                            {
+                                try { p.Ban("You've been ban by an IRC Operator!", Convert.ToUInt32(msg.Split()[1])); }
+                                catch { irc.SendMessage(SendType.Message, e.Data.Nick, "There was an error trying to ban " + p.CharacterName + ". Invalid duration?"); }
+                            }
+                            break;
+
+                        case "whois":
+
+                            if (p == null)
+                            {
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Could not find player: " + plr);
+                            }
+                            else
+                            {
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Character Name: " + p.CharacterName);
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Steam Name: " + p.SteamName);
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "SteamID: " + p.CSteamID.ToString());
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Health: " + p.Health);
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Hunger: " + p.Hunger);
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Thirst: " + p.Thirst);
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Infection: " + p.Infection);
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Stamina: " + p.Stamina);
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Experience: " + p.Experience);
+                            }
+                            break;
+
+                        case "god":
+
+                            if (p == null)
+                            {
+                                irc.SendMessage(SendType.Message, e.Data.Nick, "Could not find player: " + plr);
+                            }
+                            else
+                            {
+                                if (p.Features.GodMode)
+                                {
+                                    p.Features.GodMode = false;
+                                    irc.SendMessage(SendType.Message, e.Data.Nick, "Disabled GodMode for: " + p.CharacterName);
+                                    RocketChat.Say(p, e.Data.Nick + " from IRC has disabled your GodMode.");
+                                }
+                                else
+                                {
+                                    p.Features.GodMode = true;
+                                    irc.SendMessage(SendType.Message, e.Data.Nick, "Enabled GodMode for: " + p.CharacterName);
+                                    RocketChat.Say(p, e.Data.Nick + " from IRC has enabled GodMode for you.");
+                                }
+                            }
+                            break;
+                        default:
+                            irc.SendMessage(SendType.Message, e.Data.Nick, "Only IRC OPs can use commands here!");
+                            break;
+                    }
+                }
+            }
         }
 
         void RocketServerEvents_OnServerShutdown()
@@ -89,11 +192,14 @@ namespace RocketMod
         private void OnDisconnected(object sender, EventArgs e)
         {
             RocketChat.Say("[IRC] Server got disconnected.", Color.red);
+
+            try { irc.Connect(server, port); }
+            catch { RocketChat.Say("Failed to reconnect to IRC", Color.red); } //Try reconnect.
         }
 
         private void OnChanMessage(object sender, IrcEventArgs e)
         {
-            RocketChat.Say("[IRC] " + e.Data.Nick + ": " + e.Data.Message, Color.yellow);
+            RocketChat.Say("[IRC] " + e.Data.Nick + ": " + e.Data.Message, this.Configuration.IRCColor);
         }
 
         private void OnConnected(object sender, EventArgs e)
@@ -102,17 +208,17 @@ namespace RocketMod
             irc.Login(nick, nick, 0, nick);
             //irc.SendMessage(SendType.Message, "nickserv", "IDENTIFY " + "password");
             irc.RfcJoin(channel);
-            RocketChat.Say("[IRC] Joining channel: " + channel + " - " + server, Color.yellow);
+            RocketChat.Say("[IRC] Joining channel: " + channel + " - " + server, this.Configuration.IRCColor);
             irc.Listen();
         }
     }
 
     public class IRCConfig : IRocketPluginConfiguration
     {
-        public string server, channel, nick, shutdownMessage;
+        public string server, channel, nick, shutdownMessage, IRCOPS;
         public int port;
         public bool showJoinLeaveMsgs;
-        Color IRCColor;
+        public Color IRCColor;
         public IRocketPluginConfiguration DefaultConfiguration
         {
             get

@@ -158,10 +158,14 @@ namespace RocketMod
                             }
                             break;
                         default:
-                            irc.SendMessage(SendType.Message, e.Data.Nick, "Only IRC OPs can use commands here!");
+                            irc.SendMessage(SendType.Message, e.Data.Nick, "Unknown command!");
                             break;
                     }
                 }
+            }
+            else
+            {
+                irc.SendMessage(SendType.Message, e.Data.Nick, "Only IRC OPs can use commands here!");
             }
         }
 

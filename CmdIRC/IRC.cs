@@ -6,8 +6,9 @@ using Meebey.SmartIrc4net;
 using Rocket.Unturned.Player;
 using Rocket.Unturned.Plugins;
 using Rocket.API;
+using System.IO;
 
-namespace RocketMod
+namespace UircBot
 {
     public class PluginShutdown : RocketPlugin<IRCConfig>
     {
@@ -28,8 +29,6 @@ namespace RocketMod
             nick = this.Configuration.nick;
             port = this.Configuration.port;
 
-            
-
             if (server == "changeme" || channel == "#changeme")
             {
                 RocketChat.Say("Error: Please make sure you configure the IRC settings! This message is normal if you have just started the plugin. Apply your settings and restart the server! Unloading plugin...");
@@ -42,131 +41,270 @@ namespace RocketMod
             Rocket.Unturned.Events.RocketServerEvents.OnPlayerDisconnected += RocketServerEvents_OnPlayerDisconnected;
             Rocket.Unturned.Events.RocketServerEvents.OnServerShutdown += RocketServerEvents_OnServerShutdown;
 
+            if (!Directory.Exists(Environment.CurrentDirectory + "/Extra/"))
+            {
+                Directory.CreateDirectory(Environment.CurrentDirectory + "/Extra/");
+            }
+
+            if (!File.Exists(Environment.CurrentDirectory + "/Extra/IRCModerators.txt"))
+            {
+                using (StreamWriter write = new StreamWriter(Environment.CurrentDirectory + "/Extra/IRCModerators.txt"))
+                {
+                    write.WriteLine("//Use the IRC nick of the IRC users you want to add in list format.");
+                    write.Flush();  write.Close();
+                }
+            }
+
             ircThread = new Thread(new ThreadStart(delegate
             {
+                irc.OnConnecting += new EventHandler(OnConnecting);
                 irc.OnConnected += new EventHandler(OnConnected);
                 irc.OnChannelMessage += new IrcEventHandler(OnChanMessage);
+                irc.OnJoin += new JoinEventHandler(OnJoin);
+                irc.OnPart += new PartEventHandler(OnPart);
+                irc.OnQuit += new QuitEventHandler(OnQuit);
+                irc.OnNickChange += new NickChangeEventHandler(OnNickChange);
                 irc.OnDisconnected += new EventHandler(OnDisconnected);
-                irc.OnQueryMessage += new IrcEventHandler(OnQueryMessage);
+                irc.OnQueryMessage += new IrcEventHandler(OnPrivMsg);
+                irc.OnNames += new NamesEventHandler(OnNames);
+                irc.OnChannelAction += new ActionEventHandler(OnAction);
 
                 try { irc.Connect(server, port); RocketChat.Say("Connecting to: " + server + " port: " + port); }
                 catch (Exception ex) 
                 {
-                    RocketChat.Say("There was an error connecting to IRC.", Color.red); 
-                    
+                    RocketChat.Say("There was an error connecting to IRC.", Color.red);
+                    Reset();
                 }
             }));
             ircThread.Start();
         }
 
-        private void OnQueryMessage(object sender, IrcEventArgs e) //For some reason this just disconnects the server...
+        private bool IsModerator(string Nick)
         {
-            ChannelUser user = irc.GetChannelUser(channel, e.Data.Nick);
-
-            if (user.IsIrcOp || user.IsOp)
+            bool flag = false;
+            using (StreamReader read = new StreamReader(Environment.CurrentDirectory + "/Extra/IRCModerators.txt"))
             {
-                string cmd;
-                string msg;
-                int len = e.Data.Message.Split(' ').Length;
-                cmd = e.Data.Message.Split(' ')[0];
-
-                if (len > 1)
+                string line;
+                while ((line = read.ReadLine()) != null)
                 {
-                    msg = e.Data.Message.Substring(e.Data.Message.IndexOf(' ')).Trim();
+                    if (line == Nick)
+                        flag = true;
+                }
+            }
+            return flag;
+        }
+
+        void OnConnecting(object sender, EventArgs e)
+        {
+            RocketChat.Say("Connecting to IRC", this.Configuration.IRCColor);
+        }
+
+        public static string[] GetConnectedUsers()
+        {
+            return names;
+        }
+
+        public static void ShutDown()
+        {
+            irc.Disconnect();
+            ircThread.Abort();
+        }
+
+        public static void Reset()
+        {
+            if (irc.IsConnected)
+                irc.Disconnect();
+            ircThread = new Thread(new ThreadStart(delegate
+            {
+                try { irc.Connect(server, port); }
+                catch (Exception e)
+                {
+                    RocketChat.Say("Error Connecting to IRC", Color.red);
+                }
+            }));
+            ircThread.Start();
+        }
+
+        void OnConnected(object sender, EventArgs e)
+        {
+            RocketChat.Say("Connected to IRC");
+            irc.Login(nick, nick, 0, nick);
+
+            RocketChat.Say("Identifying with Nickserv");
+            irc.SendMessage(SendType.Message, "nickserv", "IDENTIFY " + this.Configuration.password);
+
+            RocketChat.Say("Joining channel: " + channel);
+            irc.RfcJoin(channel);
+
+            irc.Listen();
+        }
+
+        public static string[] names;
+
+        void OnNames(object sender, NamesEventArgs e)
+        {
+            names = e.UserList;
+        }
+
+        void OnDisconnected(object sender, EventArgs e)
+        {
+            RocketChat.Say("Disconnected from IRC!", Color.red);
+
+            try { irc.Connect(server, 6667); }
+            catch { RocketChat.Say("Failed to reconnect to IRC", Color.red); }
+        }
+
+        void OnChanMessage(object sender, IrcEventArgs e)
+        {
+            string message = e.Data.Message; string user = e.Data.Nick;
+
+            if (!message.StartsWith("!"))
+                RocketChat.Say("[IRC] " + user + ": " + message, this.Configuration.IRCColor);
+            else
+            {
+                
+            }
+        }
+
+        private string GetCommand(string message)
+        {
+            //return message.Split(' ')[0].ToString().Replace("!", "");
+            return message.Split(' ')[0];
+        }
+
+        void OnJoin(object sender, JoinEventArgs e)
+        {
+            if (this.Configuration.showJoinLeaveMsgs)
+                RocketChat.Say("[IRC] " + e.Data.Nick + " has joined the channel", this.Configuration.IRCColor);
+
+            irc.RfcNames(channel);
+        }
+
+        void OnPart(object sender, PartEventArgs e)
+        {
+            if (this.Configuration.showJoinLeaveMsgs)
+                RocketChat.Say("[IRC] " + e.Data.Nick + " has left the channel", this.Configuration.IRCColor);
+
+            irc.RfcNames(channel);
+        }
+
+        void OnQuit(object sender, QuitEventArgs e)
+        {
+            if (this.Configuration.showJoinLeaveMsgs)
+                RocketChat.Say("[IRC] " + e.Data.Nick + " has left IRC", this.Configuration.IRCColor);
+
+            irc.RfcNames(channel);
+        }
+
+        void OnPrivMsg(object sender, IrcEventArgs e)
+        {
+            string message = e.Data.Message; string user = e.Data.Nick;
+            if (IsModerator(user))
+            {
+                if (GetCommand(message) == "help")
+                {
+                    irc.RfcNotice(user, "kick (player) - Kicks the player from the server.");
+                    irc.RfcNotice(user, "ban (player) (duration) - Bans the player from the server.");
+                    irc.RfcNotice(user, "whois (player) - Shows basic information about the player.");
+                    irc.RfcNotice(user, "god (player) - Toggles godmode for player.");
+                    irc.RfcNotice(user, "players - Display number of players online.");
+                    irc.RfcNotice(user, "abortirc - Closes IRC plugin connection.");
+                }
+                else if (GetCommand(message) == "kick")
+                {
+                    string plr = e.Data.Message.Split(' ')[1];
+                    if (RocketPlayer.FromName(plr) == null)
+                    {
+                        irc.RfcNotice(user, "Could not find player: " + plr);
+                    }
+                    else
+                    {
+                        RocketPlayer.FromName(plr).Kick("You've been kicked by an IRC Operator!");
+                    }
+                }
+                else if (GetCommand(message) == "abortirc")
+                {
+                    ShutDown();
+                }
+                else if (GetCommand(message) == "ban")
+                {
+                    string plr = e.Data.Message.Split(' ')[1];
+                    if (RocketPlayer.FromName(plr) == null)
+                    {
+                        irc.RfcNotice(user, "Could not find player: " + plr);
+                    }
+                    else
+                    {
+                        try { RocketPlayer.FromName(plr).Ban("You've been banned by an IRC Operator!", Convert.ToUInt32(message.Split(' ')[2])); }
+                        catch { irc.RfcNotice(user, "There was an error trying to ban " + RocketPlayer.FromName(plr).CharacterName + ". Invalid duration?"); }
+                    }
+                }
+                else if (GetCommand(message) == "players")
+                {
+                    irc.RfcNotice(user, "Players online: " + SDG.Steam.Players.Count + "/" + SDG.Steam.MaxPlayers);
+                }
+                else if (GetCommand(message) == "whois")
+                {
+                    string plr = e.Data.Message.Split(' ')[1];
+                    if (RocketPlayer.FromName(plr) == null)
+                    {
+                        irc.RfcNotice(user, "Could not find player: " + plr);
+                    }
+                    else
+                    {
+                        irc.RfcNotice(user, "Character Name: " + RocketPlayer.FromName(plr).CharacterName);
+                        irc.RfcNotice(user, "Steam Name: " + RocketPlayer.FromName(plr).SteamName);
+                        irc.RfcNotice(user, "SteamID: " + RocketPlayer.FromName(plr).CSteamID.ToString());
+                        irc.RfcNotice(user, "Health: " + RocketPlayer.FromName(plr).Health);
+                        irc.RfcNotice(user, "Hunger: " + RocketPlayer.FromName(plr).Hunger);
+                        irc.RfcNotice(user, "Thirst: " + RocketPlayer.FromName(plr).Thirst);
+                        irc.RfcNotice(user, "Infection: " + RocketPlayer.FromName(plr).Infection);
+                        irc.RfcNotice(user, "Stamina: " + RocketPlayer.FromName(plr).Stamina);
+                        irc.RfcNotice(user, "Experience: " + RocketPlayer.FromName(plr).Experience);
+                    }
+                }
+                else if (GetCommand(message) == "god")
+                {
+                    string plr = e.Data.Message.Split(' ')[1];
+                    if (RocketPlayer.FromName(plr) == null)
+                    {
+                        irc.RfcNotice(user, "Could not find player: " + plr);
+                    }
+                    else
+                    {
+                        if (RocketPlayer.FromName(plr).Features.GodMode)
+                        {
+                            RocketPlayer.FromName(plr).Features.GodMode = false;
+                            irc.RfcNotice(user, "Disabled GodMode for: " + RocketPlayer.FromName(plr).CharacterName);
+                            RocketChat.Say(RocketPlayer.FromName(plr), e.Data.Nick + " from IRC has disabled your GodMode.", this.Configuration.IRCColor);
+                        }
+                        else
+                        {
+                            RocketPlayer.FromName(plr).Features.GodMode = true;
+                            irc.RfcNotice(user, "Enabled GodMode for: " + RocketPlayer.FromName(plr).CharacterName);
+                            RocketChat.Say(RocketPlayer.FromName(plr), e.Data.Nick + " from IRC has enabled GodMode for you.", this.Configuration.IRCColor);
+                        }
+                    }
                 }
                 else
                 {
-                    msg = "";
-                }
-                string plr = msg.Split()[0];
-                RocketPlayer p = RocketPlayer.FromName(plr);
-
-                if (msg != "")
-                {
-                    switch (cmd)
-                    {
-                        case "help":
-                            irc.SendMessage(SendType.Message, e.Data.Nick, "kick (player) - Kicks the player from the server.");
-                            irc.SendMessage(SendType.Message, e.Data.Nick, "ban (player) (duration) - Bans the player from the server.");
-                            irc.SendMessage(SendType.Message, e.Data.Nick, "whois (player) - Shows basic information about the player.");
-                            irc.SendMessage(SendType.Message, e.Data.Nick, "god (player) - Toggles godmode for player.");
-                            break;
-
-                        case "kick":
-                            if (p == null)
-                            {
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Could not find player: " + plr);
-                            }
-                            else
-                            {
-                                p.Kick("You've been kicked by an IRC Operator!");
-                            }
-                            break;
-
-                        case "ban":
-                            if (p == null)
-                            {
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Could not find player: " + plr);
-                            }
-                            else
-                            {
-                                try { p.Ban("You've been ban by an IRC Operator!", Convert.ToUInt32(msg.Split()[1])); }
-                                catch { irc.SendMessage(SendType.Message, e.Data.Nick, "There was an error trying to ban " + p.CharacterName + ". Invalid duration?"); }
-                            }
-                            break;
-
-                        case "whois":
-
-                            if (p == null)
-                            {
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Could not find player: " + plr);
-                            }
-                            else
-                            {
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Character Name: " + p.CharacterName);
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Steam Name: " + p.SteamName);
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "SteamID: " + p.CSteamID.ToString());
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Health: " + p.Health);
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Hunger: " + p.Hunger);
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Thirst: " + p.Thirst);
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Infection: " + p.Infection);
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Stamina: " + p.Stamina);
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Experience: " + p.Experience);
-                            }
-                            break;
-
-                        case "god":
-
-                            if (p == null)
-                            {
-                                irc.SendMessage(SendType.Message, e.Data.Nick, "Could not find player: " + plr);
-                            }
-                            else
-                            {
-                                if (p.Features.GodMode)
-                                {
-                                    p.Features.GodMode = false;
-                                    irc.SendMessage(SendType.Message, e.Data.Nick, "Disabled GodMode for: " + p.CharacterName);
-                                    RocketChat.Say(p, e.Data.Nick + " from IRC has disabled your GodMode.");
-                                }
-                                else
-                                {
-                                    p.Features.GodMode = true;
-                                    irc.SendMessage(SendType.Message, e.Data.Nick, "Enabled GodMode for: " + p.CharacterName);
-                                    RocketChat.Say(p, e.Data.Nick + " from IRC has enabled GodMode for you.");
-                                }
-                            }
-                            break;
-                        default:
-                            irc.SendMessage(SendType.Message, e.Data.Nick, "Unknown command!");
-                            break;
-                    }
+                    irc.RfcNotice(user, "Invalid command, use !help for a list of commands.");
                 }
             }
             else
             {
-                irc.SendMessage(SendType.Message, e.Data.Nick, "Only IRC OPs can use commands here!");
+                irc.RfcNotice(user, "You are not an IRC Moderator, please contact the admin if this is a problem.");
             }
+        }
+
+        void OnNickChange(object sender, NickChangeEventArgs e)
+        {
+            
+        }
+
+        void OnAction(object sender, ActionEventArgs e)
+        {
+            RocketChat.Say("* " + e.Data.Nick + " " + e.ActionMessage);
         }
 
         void RocketServerEvents_OnServerShutdown()
@@ -191,35 +329,23 @@ namespace RocketMod
         {
             irc.SendMessage(SendType.Message, channel, player.CharacterName + ": " + message);
             //Area, World and Global chat will show, as far as I'm aware, we can't find out what type the message is.
-        }
 
-        private void OnDisconnected(object sender, EventArgs e)
-        {
-            RocketChat.Say("[IRC] Server got disconnected.", Color.red);
-
-            try { irc.Connect(server, port); }
-            catch { RocketChat.Say("Failed to reconnect to IRC", Color.red); } //Try reconnect.
-        }
-
-        private void OnChanMessage(object sender, IrcEventArgs e)
-        {
-            RocketChat.Say("[IRC] " + e.Data.Nick + ": " + e.Data.Message, this.Configuration.IRCColor);
-        }
-
-        private void OnConnected(object sender, EventArgs e)
-        {
-            RocketChat.Say("[IRC] Server is now connecting to IRC.", Color.yellow);
-            irc.Login(nick, nick, 0, nick);
-            //irc.SendMessage(SendType.Message, "nickserv", "IDENTIFY " + "password");
-            irc.RfcJoin(channel);
-            RocketChat.Say("[IRC] Joining channel: " + channel + " - " + server, this.Configuration.IRCColor);
-            irc.Listen();
+            if (message == "test" && player.CharacterName == "LeeIzaZombie")
+            {
+                ircThread = new Thread(new ThreadStart(delegate
+                {
+                    Thread.Sleep(1000);
+                    irc.SendMessage(SendType.Message, channel, "test passed!");
+                    RocketChat.Say("test passed!");
+                }));
+                ircThread.Start();
+            }
         }
     }
 
     public class IRCConfig : IRocketPluginConfiguration
     {
-        public string server, channel, nick, shutdownMessage, IRCOPS;
+        public string server, channel, nick, password, shutdownMessage;
         public int port;
         public bool showJoinLeaveMsgs;
         public Color IRCColor;
@@ -232,6 +358,7 @@ namespace RocketMod
                     server = "changeme",
                     channel = "#changeme",
                     nick = "UircBot",
+                    password = "changeme",
                     port = 6667, 
                     showJoinLeaveMsgs = true,
                     shutdownMessage = "Server is shutting down! Bye bye!",

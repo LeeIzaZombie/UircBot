@@ -7,8 +7,8 @@
     <ProjectGuid>{1C2D4EC5-D2A6-428D-B2DF-99232ED09F64}</ProjectGuid>
     <OutputType>Library</OutputType>
     <AppDesignerFolder>Properties</AppDesignerFolder>
-    <RootNamespace>CmdIRC</RootNamespace>
-    <AssemblyName>CmdIRC</AssemblyName>
+    <RootNamespace>UircBot</RootNamespace>
+    <AssemblyName>UircBot</AssemblyName>
     <TargetFrameworkVersion>v4.5</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
   </PropertyGroup>
@@ -38,8 +38,9 @@
       <SpecificVersion>False</SpecificVersion>
       <HintPath>bin\Debug\Assembly-CSharp-firstpass.dll</HintPath>
     </Reference>
-    <Reference Include="IRCLibrary">
-      <HintPath>..\..\..\..\Desktop\IRCLibrary.dll</HintPath>
+    <Reference Include="IRCLibrary, Version=0.4.5.0, Culture=neutral, processorArchitecture=MSIL">
+      <SpecificVersion>False</SpecificVersion>
+      <HintPath>bin\Debug\IRCLibrary.dll</HintPath>
     </Reference>
     <Reference Include="Rocket.API, Version=1.0.0.0, Culture=neutral, processorArchitecture=MSIL">
       <SpecificVersion>False</SpecificVersion>
